@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Claude's text watermark works — an interactive explainer</title>
+<meta name="description" content="An interactive, illustrative walkthrough of how AI text watermarking (SynthID-style tournament sampling) biases word choices without changing meaning — and the statistical pattern a detector looks for.">
+<link rel="canonical" href="https://hollandcm1.github.io/watermark-explainer/">
+<!-- Open Graph (LinkedIn / Facebook) -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hollandcm1.github.io/watermark-explainer/">
+<meta property="og:title" content="How Claude's text watermark works — an interactive explainer">
+<meta property="og:description" content="How AI text watermarking biases word choices without changing meaning — and the statistical pattern a detector looks for. Illustrative concept demo.">
+<meta property="og:image" content="https://hollandcm1.github.io/watermark-explainer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="Chris Holland">
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="How Claude's text watermark works — an interactive explainer">
+<meta name="twitter:description" content="How AI text watermarking biases word choices without changing meaning — and the statistical pattern a detector looks for.">
+<meta name="twitter:image" content="https://hollandcm1.github.io/watermark-explainer/og-image.png">
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b21; --panel2:#1d232b; --ink:#e8edf2; --muted:#9aa7b4;
+    --line:#2a323c; --accent:#5aa9ff; --g-hi:#3fd08a; --g-lo:#3a4450; --warn:#ffb454;
+    --a:#5aa9ff; --b:#c084fc; --base:#9aa7b4;
+    --radius:14px; --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f4f6f9; --panel:#ffffff; --panel2:#f0f3f7; --ink:#141a20; --muted:#5b6773;
+      --line:#dce2e9; --g-lo:#c7d0da; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;
+    -webkit-font-smoothing:antialiased;padding:28px 18px 70px}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.5rem;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 22px;font-size:.96rem}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px;margin-bottom:18px}
+  .card h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+    margin:0 0 14px;font-weight:600}
+  /* aligned 3-row comparison */
+  .cmp{overflow-x:auto;padding-bottom:6px}
+  .grid{display:grid;row-gap:12px;column-gap:2px;align-items:center;min-width:max-content}
+  .rowlbl{font-size:.8rem;font-weight:700;padding-right:14px;white-space:nowrap;text-align:right}
+  .rowlbl.none{color:var(--base)} .rowlbl.A{color:var(--a)} .rowlbl.B{color:var(--b)}
+  .cell{font-size:1.12rem;padding:4px 3px;white-space:nowrap;text-align:center}
+  .cell.fixed{color:var(--muted)}
+  .cell.slot{font-weight:600;border-radius:8px;transition:.18s}
+  .cell.slot.none{color:var(--ink)}
+  .cell.slot.A.diff{background:rgba(90,169,255,.16);color:var(--a);box-shadow:inset 0 0 0 1px rgba(90,169,255,.4)}
+  .cell.slot.B.diff{background:rgba(192,132,252,.16);color:var(--b);box-shadow:inset 0 0 0 1px rgba(192,132,252,.4)}
+  .cell.slot.A{color:var(--a)} .cell.slot.B{color:var(--b)}
+  .cell.slot.same{opacity:.5;font-weight:500}
+  .colhead{font-size:.64rem;color:var(--accent);text-align:center;margin-bottom:4px;
+    text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-weight:700;
+    border:1px solid var(--accent);border-radius:999px;padding:3px 4px;
+    background:rgba(90,169,255,.08);transition:.15s;white-space:nowrap}
+  .colhead:hover{background:rgba(90,169,255,.22)}
+  .colhead.open{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .colhead.blank{cursor:default;border:none;background:none;padding:0}
+  .note{font-size:.84rem;color:var(--muted);margin-top:14px}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:5px}
+  .legend{display:flex;gap:20px;flex-wrap:wrap;font-size:.82rem;margin-top:10px}
+  /* candidate detail */
+  .cands{display:none;margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
+  .cands.show{display:block}
+  .cands .lbl{font-size:.82rem;color:var(--muted);margin-bottom:10px}
+  .crow{display:grid;grid-template-columns:130px 1fr 54px 72px 72px;gap:10px;align-items:center;
+    padding:5px 0;font-size:.9rem}
+  .chead{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+  .tok{font-family:var(--mono);font-size:.86rem}
+  .barwrap{background:var(--panel2);border-radius:6px;height:16px;overflow:hidden}
+  .bar{height:100%;background:linear-gradient(90deg,var(--g-lo),var(--accent));opacity:.55}
+  .gv{font-family:var(--mono);font-size:.8rem;text-align:right;color:var(--muted);display:flex;
+    justify-content:flex-end;align-items:center}
+  .gdot{width:12px;height:12px;border-radius:50%;margin-left:6px}
+  .pickA{color:var(--a);font-weight:700} .pickB{color:var(--b);font-weight:700} .pickN{color:var(--ink);font-weight:700}
+  code{font-family:var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.85em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How the watermark bends Claude's word choices</h1>
+  <p class="sub">All three versions side by side. The skeleton is identical; only the blue/purple <b>slots</b> swap. Highlighted cells are where a secret key overrode the most-likely word with an equally-plausible synonym. Same meaning, different fingerprint.</p>
+
+  <div style="background:rgba(255,180,84,.10);border:1px solid var(--warn);border-radius:12px;padding:14px 16px;margin-bottom:20px;font-size:.9rem;line-height:1.5">
+    <b style="color:var(--warn)">⚠ Illustrative only.</b> This is a simplified <i>concept</i> demo, not Anthropic's real algorithm. Anthropic hasn't published the technical details of Claude's watermark, so the exact procedure isn't publicly known. The mechanic shown here (biasing word choice with a key-seeded score) follows the general idea of the SynthID-style approach it's reportedly based on, but the specific words, probabilities, g-values, and selection rule are invented for teaching. Use it to understand the <i>idea</i>, not as an accurate model of what actually happens inside Claude.
+  </div>
+
+  <div class="card">
+    <h2>The three versions, aligned</h2>
+    <p style="font-size:.9rem;margin:0 0 12px;color:var(--accent)">👆 Tip: click any blue <b>▾ SLOT 1&ndash;6</b> button below to expand that slot and see its candidate words, probabilities, and g-values.</p>
+    <div class="cmp"><div class="grid" id="grid"></div></div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--base)"></span>No watermark &mdash; always the most-likely word</span>
+      <span><span class="swatch" style="background:var(--a)"></span>Key A &mdash; highlighted = changed vs. baseline</span>
+      <span><span class="swatch" style="background:var(--b)"></span>Key B &mdash; highlighted = changed vs. baseline</span>
+    </div>
+    <p class="note">Click any <b>slot label</b> above a column to see that slot's candidate words, their model probabilities, and the g-value each key assigned. That's the actual selection rule: the key favors the highest g-value among the words that were already plausible.</p>
+    <div class="cands" id="cands">
+      <div class="lbl" id="candLbl"></div>
+      <div id="candRows"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The pattern the detector actually sees</h2>
+    <p class="note" style="margin-top:0">Scored under <b style="color:var(--a)">Key A</b>: each point is the g-value of the word that's actually in that slot. The detector never sees a "base" sentence &mdash; it just measures how high each chosen word leans toward the key. Text written with Key A rides near the top; everything else jitters around chance (0.5). Summing that elevation is the whole test.</p>
+    <div id="chart"></div>
+    <div id="readout" style="margin-top:14px"></div>
+    <p class="note"><b>Why only the six slots?</b> The grey skeleton words ("The", "were", "and"&hellip;) are near-forced &mdash; one word is the obvious choice, so the watermark has nothing to swap and can't leave a mark there. All of the signal lives in the blue slots, where several words were plausible and the key got to pick. And it's <i>statistical</i>, not a fingerprint: one high point means nothing, but six words all riding high under the <i>same</i> key is a pattern unmarked text won't produce. Fewer steerable slots (short or formulaic text) = weaker, harder-to-detect watermark.</p>
+  </div>
+
+  <div class="card">
+    <h2>The takeaway</h2>
+    <p class="note" style="margin-top:0">Each swap is invisible in isolation &mdash; every version reads naturally and means the same thing. But across the six slots, Key A's choices consistently score high on Key A's g-values (and Key B's on Key B's). A detector holding the key sums those scores and sees a pattern no unmarked text would produce. Copy-paste preserves it; paraphrasing rewrites the tokens and erases it.</p>
+  </div>
+
+  <p style="text-align:center;font-size:.8rem;color:var(--muted);margin:26px 0 0;padding-top:16px;border-top:1px solid var(--line)">This interactive explainer was created with the assistance of AI.</p>
+</div>
+
+<script>
+const parts = [
+  {t:"The"},
+  {slot:0, name:"subject", cand:[["researchers",.42],["team",.30],["authors",.18],["scientists",.10]]},
+  {slot:1, name:"verb", cand:[["found",.40],["observed",.27],["reported",.20],["noted",.13]]},
+  {t:"that the"},
+  {slot:2, name:"noun", cand:[["results",.44],["findings",.31],["data",.15],["outcomes",.10]]},
+  {t:"were"},
+  {slot:3, name:"adj", cand:[["significant",.46],["meaningful",.24],["substantial",.18],["notable",.12]]},
+  {t:"and"},
+  {slot:4, name:"adj", cand:[["robust",.38],["consistent",.30],["stable",.20],["reliable",.12]]},
+  {t:"across"},
+  {slot:5, name:"noun", cand:[["conditions",.41],["groups",.29],["settings",.19],["trials",.11]]},
+  {t:"."}
+];
+
+function gval(key, slot, tok){
+  let s=key+"|"+slot+"|"+tok, h=2166136261;
+  for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+  h>>>=0; h+=0x6D2B79F5; let t=h;
+  t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
+  return (((t^(t>>>14))>>>0)/4294967296);
+}
+function pick(key,o){
+  const c=o.cand;
+  if(key==="none"){ let bi=0; for(let i=1;i<c.length;i++) if(c[i][1]>c[bi][1]) bi=i; return bi; }
+  let bi=-1,bg=-1;
+  for(let i=0;i<c.length;i++){ if(c[i][1]<0.12) continue; const g=gval(key,o.slot,c[i][0]); if(g>bg){bg=g;bi=i;} }
+  return bi;
+}
+
+const rows=[["none","No watermark"],["A","Key A"],["B","Key B"]];
+let openSlot=0;
+
+function build(){
+  const g=document.getElementById("grid");
+  const ncol=parts.length+1;
+  g.style.gridTemplateColumns="auto repeat("+parts.length+",auto)";
+  g.innerHTML="";
+
+  // header row: blank label cell + a header per part (slot name or blank)
+  const blank=document.createElement("div"); blank.className="colhead blank"; g.appendChild(blank);
+  parts.forEach(p=>{
+    const h=document.createElement("div");
+    if(p.slot!==undefined){ h.className="colhead"+(p.slot===openSlot?" open":""); h.innerHTML="▾ slot "+(p.slot+1); h.onclick=()=>toggle(p.slot); }
+    else{ h.className="colhead blank"; h.innerHTML="&nbsp;"; }
+    g.appendChild(h);
+  });
+
+  // three data rows
+  rows.forEach(([key,label])=>{
+    const lbl=document.createElement("div"); lbl.className="rowlbl "+key; lbl.textContent=label; g.appendChild(lbl);
+    const baseline = {}; // not needed; compute inline
+    parts.forEach(p=>{
+      const c=document.createElement("div");
+      if(p.slot!==undefined){
+        const wi=pick(key,p), word=p.cand[wi][0];
+        const noneWord=p.cand[pick("none",p)][0];
+        const diff = key!=="none" && word!==noneWord;
+        c.className="cell slot "+key+(diff?" diff":(key!=="none"?" same":""));
+        c.textContent=word;
+      } else { c.className="cell fixed"; c.textContent=p.t; }
+      g.appendChild(c);
+    });
+  });
+}
+
+function toggle(i){ openSlot=(openSlot===i)?null:i; build(); const box=document.getElementById("cands");
+  if(openSlot===null){box.classList.remove("show");return;} showCands(openSlot); box.classList.add("show"); }
+
+function showCands(i){
+  const o=parts.find(p=>p.slot===i);
+  const wN=pick("none",o), wA=pick("A",o), wB=pick("B",o);
+  document.getElementById("candLbl").innerHTML =
+    "Slot "+(i+1)+" candidates &mdash; greedy picks tallest bar; each key picks its highest g-value among plausible words";
+  const rEl=document.getElementById("candRows"); rEl.innerHTML="";
+  // header
+  const hd=document.createElement("div"); hd.className="crow";
+  hd.innerHTML=`<div class="chead">word</div><div class="chead">model probability</div><div class="chead" style="text-align:right">base</div><div class="chead" style="text-align:right">g · key A</div><div class="chead" style="text-align:right">g · key B</div>`;
+  rEl.appendChild(hd);
+  o.cand.forEach((c,idx)=>{
+    const gA=gval("A",i,c[0]), gB=gval("B",i,c[0]);
+    const tag = '';
+    const tagA= idx===wA?' <span class="pickA">◆A</span>':'';
+    const tagB= idx===wB?' <span class="pickB">◆B</span>':'';
+    const colA=`hsl(${140*gA},70%,${45+gA*10}%)`, colB=`hsl(${270+40*gB},60%,${55+gB*8}%)`;
+    const r=document.createElement("div"); r.className="crow";
+    r.innerHTML =
+      `<div class="tok">${tag}${c[0]}${tagA}${tagB}</div>`+
+      `<div class="barwrap"><div class="bar" style="width:${Math.round(c[1]*100)}%"></div></div>`+
+      `<div class="gv" style="${idx===wN?'color:var(--ink);font-weight:700':''}">${Math.round(c[1]*100)}%</div>`+
+      `<div class="gv" style="color:${idx===wA?'var(--a)':'var(--muted)'}">${gA.toFixed(2)}<span class="gdot" style="background:${colA}"></span></div>`+
+      `<div class="gv" style="color:${idx===wB?'var(--b)':'var(--muted)'}">${gB.toFixed(2)}<span class="gdot" style="background:${colB}"></span></div>`;
+    rEl.appendChild(r);
+  });
+}
+
+build();
+if(openSlot!==null){ showCands(openSlot); document.getElementById("cands").classList.add("show"); }
+
+// ---- detection-pattern line chart (scored under detector key A) ----
+function drawChart(){
+  const DET="A";
+  const slots=parts.filter(p=>p.slot!==undefined);
+  const series=[
+    {key:"none",label:"No watermark",col:getVar('--base')},
+    {key:"B",   label:"Key B text",  col:getVar('--b')},
+    {key:"A",   label:"Key A text",  col:getVar('--a')}
+  ];
+  // g-value under DET of each series' chosen word, per slot
+  series.forEach(s=>{
+    s.pts=slots.map(o=>{ const w=pick(s.key,o); return gval(DET,o.slot,o.cand[w][0]); });
+    s.avg=s.pts.reduce((a,b)=>a+b,0)/s.pts.length;
+  });
+
+  const W=860,H=300,L=48,R=16,T=18,B=44;
+  const pw=W-L-R, ph=H-T-B, n=slots.length;
+  const X=i=> L + (n===1?pw/2 : i*pw/(n-1));
+  const Y=g=> T + (1-g)*ph;
+  const line=getVar('--line'), muted=getVar('--muted'), warn=getVar('--warn'), ink=getVar('--ink');
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block" font-family="var(--sans)">`;
+  // y gridlines + labels
+  [0,0.5,1].forEach(g=>{
+    const y=Y(g), dash = g===0.5?'stroke-dasharray="5 4"':'';
+    svg+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===0.5?warn:line}" stroke-width="1" ${dash}/>`;
+    svg+=`<text x="${L-8}" y="${y+4}" text-anchor="end" font-size="11" fill="${g===0.5?warn:muted}">${g.toFixed(1)}</text>`;
+  });
+  svg+=`<text x="${W-R}" y="${Y(0.5)-6}" text-anchor="end" font-size="10.5" fill="${warn}">chance</text>`;
+  svg+=`<text x="14" y="${T+ph/2}" text-anchor="middle" font-size="11" fill="${muted}" transform="rotate(-90 14 ${T+ph/2})">g-value under Key A</text>`;
+  // x labels
+  slots.forEach((o,i)=>{ svg+=`<text x="${X(i)}" y="${H-16}" text-anchor="middle" font-size="11" fill="${muted}">slot ${i+1}</text>`; });
+  // series lines + markers
+  const bg=getVar('--panel');
+  const JIT=9; // horizontal lane offset per series
+  const off = s => (series.indexOf(s)-1)*JIT; // none:-JIT, B:0, A:+JIT
+  const xj = (i,s)=> X(i)+off(s);
+  // lines + markers, each series in its own horizontal lane
+  series.forEach(s=>{
+    const d=s.pts.map((g,i)=>`${xj(i,s)},${Y(g)}`).join(" ");
+    const strong = s.key==="A";
+    const dash = s.key==="none" ? 'stroke-dasharray="6 4"' : '';
+    svg+=`<polyline points="${d}" fill="none" stroke="${s.col}" stroke-width="${strong?3:2}" opacity="${strong?1:.9}" stroke-linejoin="round" ${dash}/>`;
+    s.pts.forEach((g,i)=>{
+      if(s.key==="none"){
+        svg+=`<circle cx="${xj(i,s)}" cy="${Y(g)}" r="4" fill="${bg}" stroke="${s.col}" stroke-width="2"/>`;
+      } else {
+        svg+=`<circle cx="${xj(i,s)}" cy="${Y(g)}" r="${strong?4.5:3.5}" fill="${s.col}"/>`;
+      }
+    });
+  });
+  // word labels for every point, deduped per slot (same word => same spot)
+  slots.forEach((o,i)=>{
+    const seen={}; // word -> {gs:[], cols:Set, xs:[]}
+    series.forEach(s=>{ const w=pick(s.key,o), word=o.cand[w][0], g=s.pts[i];
+      if(!seen[word]) seen[word]={g, cols:new Set(), xs:[]};
+      seen[word].cols.add(s.col); seen[word].xs.push(xj(i,s));
+    });
+    const placed=[]; // track label y's to avoid collisions within the slot
+    Object.keys(seen).sort((a,b)=>seen[b].g-seen[a].g).forEach(word=>{
+      const e=seen[word];
+      const cx=e.xs.reduce((a,b)=>a+b,0)/e.xs.length;
+      const col = e.cols.size===1 ? [...e.cols][0] : ink; // shared word -> neutral
+      let ly=Y(e.g)-9;
+      while(placed.some(p=>Math.abs(p-ly)<12)) ly-=12; // stack upward on collision
+      placed.push(ly);
+      svg+=`<text x="${cx}" y="${ly}" text-anchor="middle" font-size="10" fill="${col}" font-weight="${e.cols.size>1?600:400}">${word}</text>`;
+    });
+  });
+  svg+=`</svg>`;
+  document.getElementById("chart").innerHTML=svg;
+
+  // readout: average g under A per series
+  let ro=`<div style="display:flex;flex-direction:column;gap:8px">`;
+  series.slice().reverse().forEach(s=>{
+    const verdict = s.avg>0.62 ? `<b style="color:${getVar('--g-hi')}">flags as watermarked</b>` : `<span style="color:${muted}">reads as unmarked</span>`;
+    ro+=`<div style="display:flex;align-items:center;gap:10px;font-size:.88rem">`+
+        `<span style="width:104px;color:${s.col};font-weight:600">${s.label}</span>`+
+        `<div style="flex:1;max-width:360px;height:14px;background:var(--panel2);border-radius:5px;overflow:hidden;position:relative">`+
+          `<div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:${warn}"></div>`+
+          `<div style="height:100%;width:${(s.avg*100).toFixed(0)}%;background:${s.col};opacity:.6"></div>`+
+        `</div>`+
+        `<span style="font-family:var(--mono);font-size:.82rem">avg ${s.avg.toFixed(2)}</span>`+
+        `<span>${verdict}</span></div>`;
+  });
+  ro+=`</div>`;
+  document.getElementById("readout").innerHTML=ro;
+}
+function getVar(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+drawChart();
+</script>
+</body>
+</html>
